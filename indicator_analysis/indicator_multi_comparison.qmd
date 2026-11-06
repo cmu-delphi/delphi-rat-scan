@@ -75,10 +75,6 @@ if (exists("params", envir = .GlobalEnv, inherits = FALSE) &&
     bindingIsLocked("params", .GlobalEnv)) {
     unlockBinding("params", .GlobalEnv)
 }
-# Optional date bounds
-start_date <- as.Date(params$start_day %||% "1900-01-01")
-end_date <- as.Date(params$end_day %||% format(Sys.Date()))
-reference_window <- if (is.null(params$start_day) && is.null(params$end_day)) NULL else epidatr::epirange(start_date, end_date)
 
 if (!require("pak")) install.packages("pak")
 # The V5 API needs epidatr >= 1.4.0 and epiprocess >= 0.13.0.
@@ -90,10 +86,16 @@ for (pkg in names(min_versions)) {
 }
 if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
 pacman::p_load(
-    epidatr, epiprocess, covidcast,
+    epidatr, epiprocess,
+    DT, covidcast, plotly,
     tidyverse, stringr, scales, patchwork,
-    here, glue, DT, rlang
+    here, glue, rlang
 )
+
+# Optional date bounds
+start_date <- as.Date(params$start_day %||% "1900-01-01")
+end_date <- as.Date(params$end_day %||% format(Sys.Date()))
+reference_window <- if (is.null(params$start_day) && is.null(params$end_day)) NULL else epidatr::epirange(start_date, end_date)
 
 knitr::opts_chunk$set(cache.extra = list(params))
 

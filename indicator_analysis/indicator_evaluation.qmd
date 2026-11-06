@@ -135,11 +135,6 @@ if (!is.null(params$input_csv) &&
     params$source <- tools::file_path_sans_ext(basename(params$input_csv))
 }
 
-# Optional date bounds: a blank one is open-ended, and if both are blank the
-# V5 query gets no date filter at all.
-start_date <- as.Date(params$start_day %||% "1900-01-01")
-end_date <- as.Date(params$end_day %||% format(Sys.Date()))
-reference_window <- if (is.null(params$start_day) && is.null(params$end_day)) NULL else epidatr::epirange(start_date, end_date)
 
 # Load libraries
 if (!require("pak")) install.packages("pak")
@@ -153,9 +148,16 @@ for (pkg in names(min_versions)) {
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(
     epidatr, epiprocess,
+    DT, covidcast, plotly,
     tidyverse, stringr, scales, patchwork,
     here, glue, ggtext
 )
+
+# Optional date bounds: a blank one is open-ended, and if both are blank the
+# V5 query gets no date filter at all.
+start_date <- as.Date(params$start_day %||% "1900-01-01")
+end_date <- as.Date(params$end_day %||% format(Sys.Date()))
+reference_window <- if (is.null(params$start_day) && is.null(params$end_day)) NULL else epidatr::epirange(start_date, end_date)
 # Custom HTML-friendly label wrapper for ggtext::element_markdown
 label_wrap_html <- function(width = 25) {
   fun <- label_wrap_gen(width = width)
@@ -693,15 +695,13 @@ strat_keys <- c(signal_key, params$extra_keys)
 n_locations <- n_distinct(df_candidate$geo_value)
 n_periods <- n_distinct(df_candidate$time_value)
 
-# Stratum levels per extra key, and the (period x stratum) cells a location
-# could fill. Used by the table below and by the missingness section.
+# Stratum levels per extra key, and how many stratum combinations occur.
 strata_levels <- map(set_names(params$extra_keys), ~ sort(unique(as.character(df_candidate[[.x]]))))
 n_key_combos <- if (length(params$extra_keys) > 0) {
     df_candidate %>% as_tibble() %>% distinct(across(all_of(params$extra_keys))) %>% nrow()
 } else {
     1L
 }
-n_strata_cells <- max(1L, prod(lengths(strata_levels)))
 
 # Length of the requested window, in the indicator's own periods
 req_days <- as.integer(as.Date(params$end_day) - as.Date(params$start_day)) + 1L
@@ -842,7 +842,7 @@ Two words are used throughout. An **observation** is one row: a single value for
 
 Coverage comes first because everything after it describes only the values that exist.
 
-A value is **missing** when no row exists for a (location, period`r if (length(params$extra_keys) > 0) ", stratum" else ""`) cell. Each location could fill `r label_comma()(n_periods)` `r env_time_type` period(s)`r if (n_strata_cells > 1) sprintf(" x %s stratum cell(s)", label_comma()(n_strata_cells)) else ""` = `r label_comma()(n_periods * n_strata_cells)` **possible periods with values**. Periods before any location's first reported period fall outside that grid, which is why the observed and requested windows differ in the table above.
+A value is **missing** when no row exists for a (location, period`r if (length(params$extra_keys) > 0) ", stratum" else ""`) cell. Each location`r if (length(params$extra_keys) > 0) " and stratum" else ""` could fill `r label_comma()(n_periods)` `r env_time_type` period(s), the **possible periods with values**.`r if (length(params$extra_keys) > 0) " Missingness is measured only for the strata a location reports: datasets differ in which strata each location publishes, so a stratum a location never reports is listed as not reported rather than counted as missing." else ""` Periods before any location's first reported period fall outside that grid, which is why the observed and requested windows differ in the table above.
 
 The chart below tracks how many locations report in each period, against the `r n_locations` in the dataset (dotted line).
 
@@ -867,6 +867,12 @@ summary_base <- df_candidate %>%
     select(all_of(c(strat_keys, "geo_value", "time_value")), value) %>%
     complete(nesting(!!!rlang::syms(c(signal_key, "time_value"))),
              !!!rlang::syms(params$extra_keys), geo_value)
+
+# Grid limited to the strata each location reports. A stratum a location never
+# reports is a coverage gap, not missing values.
+cell_keys <- c(signal_key, "geo_value", params$extra_keys)
+summary_reported <- summary_base %>%
+    filter(any(!is.na(value)), .by = all_of(cell_keys))
 ```
 
 ```{r}
@@ -899,7 +905,7 @@ ggplot(coverage, aes(x = time_value, y = n_available,
 #| eval: !expr length(params$extra_keys) > 0
 show_ind_col <- has_signal && multi_signal
 
-strat_miss <- summary_base %>%
+strat_miss <- summary_reported %>%
     group_by(across(all_of(strat_keys))) %>%
     summarize(
         n_possible = n(),
@@ -931,7 +937,7 @@ DT::datatable(
         "Periods with Values Reported", "Possible Periods with Values", "% Missing", "Avg. Value"
     ),
     caption = sprintf(
-        "Missingness by stratifier. Possible periods with values = %s %s period(s) x %s location(s) for each stratum.",
+        "Missingness by stratifier. Possible periods with values = %s %s period(s) x the locations reporting that stratum (of %s in the dataset).",
         label_comma()(n_periods), env_time_type, label_comma()(n_locations)
     ),
     rownames = FALSE, options = list(scrollX = TRUE, scrollY = "300px", scrollCollapse = TRUE, paging = TRUE, dom = "tp")
@@ -940,18 +946,29 @@ DT::datatable(
 
 :::
 
-#### Summary Statistics by Location
+#### Summary Statistics by Location`r if (length(params$extra_keys) > 0) " and Stratum" else ""`
 
-This table summarizes the available data across all included locations. Locations with no candidate information are not considered.
+This table summarizes the available data `r if (length(params$extra_keys) > 0) "for each location and each stratum it reports. A stratum a location never reports is listed under *Strata not reported* rather than counted as missing" else "across all included locations"`. Locations with no candidate information are not considered.
 
 ```{r}
 #| label: eda-summary
 #| results: asis
 #| echo: false
-# Per (indicator, location) against the full grid, so a location missing an
-# entire stratum counts as missing rather than being ignored.
-summary_tbl_all <- summary_base %>%
-    group_by(across(all_of(c(signal_key, "geo_value")))) %>%
+has_extra <- length(params$extra_keys) > 0
+# e.g. "18-49", or "18-49 / female" with two keys
+stratum_label <- function(df) {
+    if (!has_extra) return(rep(NA_character_, nrow(df)))
+    do.call(paste, c(lapply(params$extra_keys, function(k) as.character(df[[k]])), sep = " / "))
+}
+
+# Locations with no values in any stratum
+excluded_locs_df <- summary_base %>%
+    summarize(no_data = all(is.na(value)), .by = all_of(c(signal_key, "geo_value"))) %>%
+    filter(no_data)
+
+# One row per reported (location, stratum); denominator = number of periods.
+summary_tbl_all <- summary_reported %>%
+    group_by(across(all_of(cell_keys))) %>%
     summarize(
         n_possible = n(),
         n_obs = sum(!is.na(value)),
@@ -961,10 +978,9 @@ summary_tbl_all <- summary_base %>%
         cand_miss = sprintf("%.1f%%", 100 * (1 - n_obs / n_possible)),
         .groups = "drop"
     ) %>%
-    add_indicator()
+    add_indicator() %>%
+    mutate(stratum = stratum_label(.))
 
-excluded_locs_df <- summary_tbl_all %>%
-    filter(is.na(cand_mean) | cand_miss_frac == 1)
 if (nrow(excluded_locs_df) > 0) {
     for (sig in signals_vec) {
         ex_sig <- excluded_locs_df %>% filter_signal(sig)
@@ -978,22 +994,53 @@ if (nrow(excluded_locs_df) > 0) {
     }
 }
 
+# Per stratum, how many locations never report it.
+if (has_extra) {
+    strata_absent <- summary_base %>%
+        filter(!geo_value %in% excluded_locs_df$geo_value) %>%
+        summarize(reported = any(!is.na(value)), .by = all_of(cell_keys)) %>%
+        filter(!reported) %>%
+        summarize(n_absent = n(), .by = all_of(c(signal_key, params$extra_keys))) %>%
+        mutate(across(all_of(params$extra_keys), order_strata)) %>%
+        arrange(across(all_of(params$extra_keys)))
+    strata_absent$stratum <- stratum_label(strata_absent)
+    for (sig in signals_vec) {
+        sa_sig <- strata_absent %>% filter_signal(sig)
+        if (nrow(sa_sig) > 0) {
+            cat(sprintf(
+                "**Strata not reported%s**: %s\n\n",
+                if (multi_signal) sprintf(" — %s", signal_labels[sig]) else "",
+                paste(sprintf("%s (by %d of %d locations)", sa_sig$stratum, sa_sig$n_absent, n_locations), collapse = "; ")
+            ))
+        }
+    }
+}
+
 zero_var_cand_locs_df <- summary_tbl_all %>%
     filter(!is.na(cand_var) & cand_var == 0 & cand_miss_frac < 1)
 if (nrow(zero_var_cand_locs_df) > 0) {
     for (sig in signals_vec) {
         zv_sig <- zero_var_cand_locs_df %>% filter_signal(sig)
         if (nrow(zv_sig) > 0) {
-            cat(sprintf(
-                "**Zero variance locations (flatlined) — %s**: %s\n\n",
-                signal_labels[sig],
+            zv_entries <- if (has_extra) {
+                idx <- random_sample(seq_len(nrow(zv_sig)))
+                paste0(paste(sprintf("%s (%s)", geo_to_name(zv_sig$geo_value[idx]), zv_sig$stratum[idx]), collapse = ", "),
+                       if (nrow(zv_sig) > 15) ", etc." else "")
+            } else {
                 format_excluded(zv_sig$geo_value)
+            }
+            cat(sprintf(
+                "**Zero variance %s (flatlined) — %s**: %s\n\n",
+                if (has_extra) "locations and strata" else "locations",
+                signal_labels[sig],
+                zv_entries
             ))
         }
     }
 }
 
-# Summary of missingness levels per indicator
+# Missingness bands per indicator; 100% = locations with no data.
+miss_unit <- if (has_extra) "location-stratum pairs" else "locations"
 miss_levels <- summary_tbl_all %>%
     mutate(
         cand_miss_group = case_when(
@@ -1013,20 +1060,26 @@ for (sig in signals_vec) {
         filter_signal(sig) %>%
         count(cand_miss_group) %>%
         complete(cand_miss_group, fill = list(n = 0))
+    n_no_data <- nrow(excluded_locs_df %>% filter_signal(sig))
+    cand_counts$n[cand_counts$cand_miss_group == "100% missing"] <- n_no_data
     for (i in seq_len(nrow(cand_counts))) {
-        cat(sprintf("- **%s**: %d locations\n",
-                    cand_counts$cand_miss_group[i], cand_counts$n[i]))
+        is_no_data <- cand_counts$cand_miss_group[i] == "100% missing"
+        cat(sprintf("- **%s**: %d %s\n",
+                    cand_counts$cand_miss_group[i], cand_counts$n[i],
+                    if (is_no_data && has_extra) "locations (no data in any stratum)"
+                    else if (is_no_data) "locations" else miss_unit))
     }
     cat("\n")
 }
 
 summary_tbl <- summary_tbl_all %>%
     filter(!is.na(cand_mean) & cand_miss_frac < 1) %>%
-    arrange(desc(cand_miss_frac)) %>%
+    mutate(across(all_of(params$extra_keys), order_strata)) %>%
+    arrange(desc(cand_miss_frac), geo_value, across(all_of(params$extra_keys))) %>%
     mutate(geo_value = geo_to_name(geo_value)) %>%
     select(
         any_of(if (has_signal && multi_signal) "indicator" else character(0)),
-        geo_value, n_obs, n_possible, cand_mean, cand_miss
+        geo_value, all_of(params$extra_keys), n_obs, n_possible, cand_mean, cand_miss
     )
 
 DT::datatable(
@@ -1034,16 +1087,17 @@ DT::datatable(
     colnames = c(
         if (has_signal && multi_signal) "Indicator" else NULL,
         sprintf("Location (%s)", params$geo_type),
+        str_to_title(str_replace_all(params$extra_keys, "_", " ")),
         "Periods with Values Reported",
         "Possible Periods with Values",
         "Avg. Value",
         "% Missing"
     ),
     caption = sprintf(
-        "Summary statistics by location. Possible periods with values per location = %s %s period(s)%s = %s; %% missing is the share of those cells with no reported value.",
+        "Summary statistics by location%s. Possible periods with values per row = %s %s period(s); %% missing is the share of those periods with no reported value.%s",
+        if (has_extra) " and stratum" else "",
         label_comma()(n_periods), env_time_type,
-        if (n_strata_cells > 1) sprintf(" x %s stratum cell(s)", label_comma()(n_strata_cells)) else "",
-        label_comma()(n_periods * n_strata_cells)
+        if (has_extra) " Only the strata each location reports are listed." else ""
     ),
     rownames = FALSE, options = list(scrollX = TRUE, scrollY = "400px", scrollCollapse = TRUE, paging = TRUE, dom = "tp")
 ) %>% DT::formatRound(columns = which(names(summary_tbl) == "cand_mean"), digits = 2)
