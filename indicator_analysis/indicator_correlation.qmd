@@ -141,10 +141,6 @@ if (!is.null(params$candidate_csv) &&
 # Name defaults
 if (is.null(params$guiding_name) || !nzchar(params$guiding_name)) params$guiding_name <- params$guiding_indicator
 if (is.null(params$candidate_name) || !nzchar(params$candidate_name)) params$candidate_name <- params$candidate_indicator
-# Optional date bounds
-start_date <- as.Date(params$start_day %||% "1900-01-01")
-end_date <- as.Date(params$end_day %||% format(Sys.Date()))
-reference_window <- if (is.null(params$start_day) && is.null(params$end_day)) NULL else epidatr::epirange(start_date, end_date)
 
 # Load libraries
 if (!require("pak")) install.packages("pak")
@@ -158,9 +154,15 @@ for (pkg in names(min_versions)) {
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(
     epidatr, epiprocess,
+    DT, covidcast, plotly,
     tidyverse, stringr, scales, patchwork,
     here, glue, ggtext
 )
+
+# Optional date bounds
+start_date <- as.Date(params$start_day %||% "1900-01-01")
+end_date <- as.Date(params$end_day %||% format(Sys.Date()))
+reference_window <- if (is.null(params$start_day) && is.null(params$end_day)) NULL else epidatr::epirange(start_date, end_date)
 
 # Resolve geo_type parameter (infer if not provided)
 if (is.null(params$geo_type) || !nzchar(params$geo_type)) {
