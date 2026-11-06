@@ -76,11 +76,6 @@ if (!exists("params")) {
     )
 }
 
-# Optional date bounds: a blank one is open-ended, and if both are blank the
-# V5 query gets no date filter at all.
-start_date <- as.Date(params$start_day %||% "1900-01-01")
-end_date <- as.Date(params$end_day %||% format(Sys.Date()))
-reference_window <- if (is.null(params$start_day) && is.null(params$end_day)) NULL else epidatr::epirange(start_date, end_date)
 geo_type <- params$geo_type %||% "state"
 
 # Load libraries
@@ -95,10 +90,17 @@ for (pkg in names(min_versions)) {
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(
     epidatr, epiprocess,
+    DT, covidcast, plotly,
     tidyverse, scales, patchwork,
-    knitr, here, MMWRweek, glue, DT,
+    knitr, here, MMWRweek, glue,
     fs, arrow
 )
+
+# Optional date bounds: a blank one is open-ended, and if both are blank the
+# V5 query gets no date filter at all.
+start_date <- as.Date(params$start_day %||% "1900-01-01")
+end_date <- as.Date(params$end_day %||% format(Sys.Date()))
+reference_window <- if (is.null(params$start_day) && is.null(params$end_day)) NULL else epidatr::epirange(start_date, end_date)
 
 # Invalidate knitr cache when params or local input files change.
 input_cache_key <- NULL
