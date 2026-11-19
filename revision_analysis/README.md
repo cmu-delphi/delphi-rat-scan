@@ -47,13 +47,9 @@ quarto::quarto_render(
 | `n_worst`               | Number of worst-behaving locations to highlight in fan plots      | `18`                                                 |
 | `convergence_threshold` | Relative tolerance for "converged" (fraction)                     | `0.05`                                               |
 
-## Running on a different signal via the API
+## Rendered examples
 
-You can use the provided example scripts in this directory rather than long `quarto` strings in terminal. 
-
-```bash
-Rscript revision_analysis_examples.R
-```
+Published revision analyses, and the params that produced them, live in [analysis-notebooks](https://github.com/cmu-delphi/analysis-notebooks).
 
 ## Running on local data
 

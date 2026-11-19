@@ -163,13 +163,9 @@ quarto::quarto_render(
 )
 ```
 
-### Using the Batch Script
+### Rendered examples
 
-You can use the provided example scripts in this directory rather than long `quarto` strings in the terminal.
-
-```bash
-Rscript indicator_analysis/indicator_evaluation_examples.R
-```
+Published analyses built with these notebooks, and the params that produced them, live in [analysis-notebooks](https://github.com/cmu-delphi/analysis-notebooks).
 
 ---
 

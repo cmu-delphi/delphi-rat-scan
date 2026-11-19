@@ -1,36 +1,29 @@
 # Delphi RAT-SCAN
 
-This repository contains the Delphi RAT-SCAN (Rapid Assessment Tool for Signal Correlation and iNformation), a set of parameterizable notebooks for analyzing and tracking epidemiological indicators in the Delphi data pipeline. 
+This repository contains the Delphi RAT-SCAN (Rapid Assessment Tool for Signal Correlation and iNformation), a set of parameterized Quarto notebooks for analyzing and tracking epidemiological indicators in the Delphi data pipeline.
 
-## Existing Notebooks
+## Notebooks
 
-*   [`indicator_analysis/indicator_evaluation.qmd`](indicator_analysis/indicator_evaluation.qmd). A notebook that performs candidate-only exploratory data analysis (EDA) to understand signal characteristics, coverage, missingness, and versioning/revision behavior.
-*   [`indicator_analysis/indicator_correlation.qmd`](indicator_analysis/indicator_correlation.qmd). A notebook that evaluates a candidate indicator against a guiding indicator (presumed ground truth) to assess its nowcasting/forecasting value via EDA overlays and correlation/lag analyses.
-*   [`indicator_analysis/indicator_multi_comparison.qmd`](indicator_analysis/indicator_multi_comparison.qmd). A notebook that evaluates one candidate indicator against multiple reference indicators in a single pairwise comparison report.
-*   [`revision_analysis/revision_analysis.qmd`](revision_analysis/revision_analysis.qmd). A notebook that tracks versioned time series revisions to determine how long, on average, a series continues to receive revisions after its first publication.
+*   [`indicator_analysis/indicator_evaluation.qmd`](indicator_analysis/indicator_evaluation.qmd) performs candidate-only exploratory data analysis (EDA) to understand signal characteristics, coverage, missingness, and versioning/revision behavior.
+*   [`indicator_analysis/indicator_correlation.qmd`](indicator_analysis/indicator_correlation.qmd) evaluates a candidate indicator against a guiding indicator (presumed ground truth) to assess its nowcasting/forecasting value via EDA overlays and correlation/lag analyses.
+*   [`indicator_analysis/indicator_multi_comparison.qmd`](indicator_analysis/indicator_multi_comparison.qmd) evaluates one candidate indicator against multiple reference indicators in a single pairwise comparison report.
+*   [`revision_analysis/revision_analysis.qmd`](revision_analysis/revision_analysis.qmd) tracks versioned time series revisions to determine how long, on average, a series continues to receive revisions after its first publication.
 
-## Generating and Publishing Examples
+Each folder's README lists the notebook params and how to run them on API or local data.
 
-The notebooks act as parameterized templates. To generate local examples and publish them as a website to GitHub Pages, the repository relies on Quarto's publishing mechanism and a pre-render hook.
+## Rendering a notebook
 
-Some relevant files are:
+The notebooks are templates: pass params when rendering. For example:
 
-*   [`_quarto.yml`](_quarto.yml). Contains the rules for the website structure, navigation menu, and specifies the pre-render script.
-*   [`scripts/pre_render.R`](scripts/pre_render.R). Automatically executes the `.qmd` notebooks with pre-defined parameters to generate static HTML examples before the website is built.
-*   [`index.qmd`](index.qmd). The main page of the website. It is used to make the rendered html files visible in the website.
+```bash
+quarto render indicator_analysis/indicator_evaluation.qmd \
+  -P source:nssp \
+  -P signal:smoothed_pct_ed_visits_covid \
+  -P geo_type:state
+```
 
-### Including a New Example
+Rendered reports are not committed here (`*.html` is gitignored).
 
-To add a new analysis example to the website:
+## Publishing analyses
 
-1.  Add a new block of code in `scripts/pre_render.R` that calls `quarto::quarto_render()` with your desired `execute_params`. 
-2. To make the rendered html visible on the website, update `_quarto.yml` and/or `index.qmd` to include a link to your newly generated HTML file.
-3.  Preview or Publish:
-    *   To view the changes locally, run:
-        ```bash
-        quarto preview
-        ```
-    *   To publish the updated examples directly to the `gh-pages` branch, run:
-        ```bash
-        quarto publish gh-pages
-        ```
+Analyses meant for sharing, and the site that hosts them, live in [analysis-notebooks](https://github.com/cmu-delphi/analysis-notebooks). That repo stores each report's notebook and params, renders them with this repo's notebooks, and publishes the HTML to its gh-pages branch.

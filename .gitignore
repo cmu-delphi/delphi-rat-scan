@@ -1,5 +1,4 @@
 .DS_Store
-_site
 
 # History files
 .Rhistory
@@ -41,12 +40,9 @@ indicator_analysis/indicator_evaluation_cache/
 indicator_analysis/indicator_evaluation_files/
 indicator_analysis/indicator_comparison_cache/
 indicator_analysis/indicator_comparison_files/
-examples/
 
 *.csv
 
 
 # revision_analysis
 revision_analysis/data/
-# dataset_comparison
-dataset_comparison/
