@@ -1,29 +1,32 @@
 # Delphi RAT-SCAN
 
-This repository contains the Delphi RAT-SCAN (Rapid Assessment Tool for Signal Correlation and iNformation), a set of parameterized Quarto notebooks for analyzing and tracking epidemiological indicators in the Delphi data pipeline.
+RAT-SCAN (Rapid Assessment Tool for Signal Correlation and iNformation) is a set of parameterized Quarto notebooks for analyzing epidemiological indicators in the Delphi data pipeline.
 
 ## Notebooks
 
-*   [`indicator_analysis/indicator_evaluation.qmd`](indicator_analysis/indicator_evaluation.qmd) performs candidate-only exploratory data analysis (EDA) to understand signal characteristics, coverage, missingness, and versioning/revision behavior.
-*   [`indicator_analysis/indicator_correlation.qmd`](indicator_analysis/indicator_correlation.qmd) evaluates a candidate indicator against a guiding indicator (presumed ground truth) to assess its nowcasting/forecasting value via EDA overlays and correlation/lag analyses.
-*   [`indicator_analysis/indicator_multi_comparison.qmd`](indicator_analysis/indicator_multi_comparison.qmd) evaluates one candidate indicator against multiple reference indicators in a single pairwise comparison report.
-*   [`revision_analysis/revision_analysis.qmd`](revision_analysis/revision_analysis.qmd) tracks versioned time series revisions to determine how long, on average, a series continues to receive revisions after its first publication.
+| Folder | Notebook | Purpose |
+| --- | --- | --- |
+| [`eda/`](eda/) | [`indicator_eda.qmd`](eda/indicator_eda.qmd) | Characteristics, coverage, missingness and revisions of one or more indicators |
+| [`correlation/`](correlation/) | [`indicator_correlation_single.qmd`](correlation/indicator_correlation_single.qmd) | Candidate vs one reference indicator: overlays, correlation and lags |
+| | [`indicator_correlation_multi.qmd`](correlation/indicator_correlation_multi.qmd) | Candidate vs several reference indicators |
+| [`revision/`](revision/) | [`indicator_revision.qmd`](revision/indicator_revision.qmd) | Revisions of one signal: bias of first reports, how fast values stabilize, and variation by location, season and signal features |
 
-Each folder's README lists the notebook params and how to run them on API or local data.
+## Installation
 
-## Rendering a notebook
+- **R 4.1+**: from [CRAN](https://cran.r-project.org/) or `brew install --cask r`. [RStudio](https://posit.co/download/rstudio-desktop/) and [Positron](https://positron.posit.co/) are optional editors.
+- **Quarto CLI**: from the [Quarto website](https://quarto.org/docs/get-started/) or `brew install --cask quarto`. The `quarto` R package renders from R but still needs the CLI.
+- **R packages**: each notebook installs what it is missing on first run.
 
-The notebooks are templates: pass params when rendering. For example:
+## Rendering
+
+Pass params on the command line or from R. For example, an EDA of NSSP COVID ED visits by state:
 
 ```bash
-quarto render indicator_analysis/indicator_evaluation.qmd \
-  -P source:nssp \
-  -P signal:smoothed_pct_ed_visits_covid \
-  -P geo_type:state
+quarto render eda/indicator_eda.qmd -P source:nssp -P signal:pct_ed_visits_covid -P geo_type:state
 ```
 
-Rendered reports are not committed here (`*.html` is gitignored).
-
-## Publishing analyses
-
-Analyses meant for sharing, and the site that hosts them, live in [analysis-notebooks](https://github.com/cmu-delphi/analysis-notebooks). That repo stores each report's notebook and params, renders them with this repo's notebooks, and publishes the HTML to its gh-pages branch.
+```r
+quarto::quarto_render("eda/indicator_eda.qmd", execute_params = list(
+  source = "nssp", signal = "pct_ed_visits_covid", geo_type = "state"
+))
+```
