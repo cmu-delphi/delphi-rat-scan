@@ -13,7 +13,9 @@ It answers two questions:
    This is the RAT-scan lagged correlation, run on the nowcast median and on the as-of data, with the difference (Δ Spearman) per lag.
    It is shown per geo over time, and across geos at each forecast date.
 
-The template is rendered once per nowcast.
+The template is rendered once per served nowcast artifact: a model, its parameters and its signal.
+Each report shows the artifact ID in its subtitle and the full model parameters in its configuration section.
+Do not use the API's `recommended` artifact: when a signal has two served configurations, it returns whichever ran last.
 
 ## Requirements
 
@@ -22,12 +24,17 @@ The template is rendered once per nowcast.
 
 ## Running
 
-Render all the nowcasts in [nowcast_evaluation_examples.R](nowcast_evaluation_examples.R), or only some of them by name:
+[nowcast_evaluation_examples.R](nowcast_evaluation_examples.R) gets the served artifacts (those whose runs are not obsolete) from the API and renders one report per artifact.
+Filter by source, signal or artifact ID:
 
 ```bash
 Rscript nowcast_analysis/nowcast_evaluation_examples.R
-Rscript nowcast_analysis/nowcast_evaluation_examples.R nhsn_covid claims_outpatient_covid
+Rscript nowcast_analysis/nowcast_evaluation_examples.R nhsn
+Rscript nowcast_analysis/nowcast_evaluation_examples.R confirmed_admissions_covid_ew bde3aa63cb72cca5
 ```
+
+The display name and the guiding indicator of each signal are in the `signal_info` table of the script; add a row when a new signal is served.
+The reports are named `nowcast_eval_<signal>_<artifact_id>.html`.
 
 Or render one directly from R:
 
@@ -36,7 +43,7 @@ quarto::quarto_render(
   "nowcast_analysis/nowcast_evaluation.qmd",
   execute_params = list(
     nowcast_source = "claims_outpatient",
-    nowcast_signal = "claims_outpatient_ov_pct_claims_covid",
+    artifact_id = "bde3aa63cb72cca5",
     nowcast_name = "Claims: % Outpatient Visits COVID",
     guiding_source = "nhsn",
     guiding_signal = "confirmed_admissions_covid_ew",
@@ -67,9 +74,9 @@ A cutoff with no nowcast run on that date is not evaluated.
 
 | Parameter | Description | Default |
 | --- | --- | --- |
-| `nowcast_source`, `nowcast_signal` | The nowcast, as in `/nowcast/metadata/` | required |
+| `nowcast_source` | Nowcast source, as in `/nowcast/metadata/` | required |
+| `artifact_id` | 16-character ID of the artifact; it fixes the model, its params and the signal | required |
 | `nowcast_name` | Display label | signal name |
-| `nowcaster`, `artifact_id` | Model and artifact | `delphirf`, `recommended` |
 | `geo_type` | Geographic level | `state` |
 | `guiding_source`, `guiding_signal`, `guiding_name` | Finalized guiding indicator for the correlation lift; leave empty for WIS only | none |
 | `start_day`, `end_day` | Range of forecast dates | first nowcast run, today |
