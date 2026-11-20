@@ -6,7 +6,6 @@ One parameterized template, rendered once per served artifact (model + params + 
 ## Files
 
 - `nowcast_evaluation.qmd`: the report. Sections: configuration, data, nowcast overview, WIS (by lag, geo, time; coverage), correlation lift against a finalized guiding indicator.
-- `nowcast_evaluation_examples.R`: gets the served artifacts from the API, joins the hand-kept `signal_info` table (display name, guide), and renders one report per artifact. Arguments filter by source, signal or artifact ID.
 - `R/` (sourced by the qmd and the tests; no package):
   - `timing.R`: epiweek and cutoff dates. `forecast_cutoffs()`, `latest_saturday()`, `week_end_date()`, `default_report_offset()` (claims use the Tuesday release), `default_daily_lags()`, `anchor_lags_days()`.
   - `nowcast_api.R`: `/nowcast/metadata/`, `/nowcast/metadata/runs/` and `/nowcast/archive/` over httr2 (epidatr has no wrapper). `fetch_served_artifacts()` keeps artifacts with a run that is not obsolete; `params_table()` formats the model params for the report. `fetch_nowcast_archive()` moves weekly reference times to the epiweek-ending Saturday and sets `lag = -horizon`. `exclusions_from_params()` reads training exclusions from the artifact params.

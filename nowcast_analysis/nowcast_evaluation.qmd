@@ -13,7 +13,7 @@ format:
 params:
   # Nowcast to evaluate: an Epidata V5 /nowcast/ source and one of its served
   # artifacts. The artifact fixes the model, its params and the signal.
-  # nowcast_evaluation_examples.R lists the served artifacts.
+  # fetch_served_artifacts() in R/nowcast_api.R lists the served artifacts.
   nowcast_source:
   artifact_id:
   nowcast_name:

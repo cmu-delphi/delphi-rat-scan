@@ -24,19 +24,10 @@ Do not use the API's `recommended` artifact: when a signal has two served config
 
 ## Running
 
-[nowcast_evaluation_examples.R](nowcast_evaluation_examples.R) gets the served artifacts (those whose runs are not obsolete) from the API and renders one report per artifact.
-Filter by source, signal or artifact ID:
+The template is rendered once per served artifact. `fetch_served_artifacts()` in [R/nowcast_api.R](R/nowcast_api.R) lists them.
+The published set, with display names and guiding indicators, is defined in [analysis-notebooks](https://github.com/cmu-delphi/analysis-notebooks) (`nowcast/`).
 
-```bash
-Rscript nowcast_analysis/nowcast_evaluation_examples.R
-Rscript nowcast_analysis/nowcast_evaluation_examples.R nhsn
-Rscript nowcast_analysis/nowcast_evaluation_examples.R confirmed_admissions_covid_ew bde3aa63cb72cca5
-```
-
-The display name and the guiding indicator of each signal are in the `signal_info` table of the script; add a row when a new signal is served.
-The reports are named `nowcast_eval_<signal>_<artifact_id>.html`.
-
-Or render one directly from R:
+To render one report from R:
 
 ```r
 quarto::quarto_render(
