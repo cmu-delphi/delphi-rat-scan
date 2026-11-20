@@ -12,14 +12,14 @@ format:
 params:
   # Candidate Indicator
   candidate_source:
-  candidate_indicator:
+  candidate_signal:
   candidate_name:
   candidate_csv: !expr "NULL"
   # Reference Indicators
-  reference_sources: !expr "character()"
-  reference_indicators: !expr "character()"
-  reference_names: !expr "character()"
-  reference_csvs: !expr "NULL"
+  reference_source: !expr "character()"
+  reference_signal: !expr "character()"
+  reference_name: !expr "character()"
+  reference_csv: !expr "NULL"
   # Shared settings
   geo_type:
   start_day:
@@ -50,19 +50,19 @@ execute:
 if (!exists("params")) {
     params <- list(
         candidate_source = "nssp",
-        candidate_indicator = "pct_ed_visits_covid",
+        candidate_signal = "pct_ed_visits_covid",
         candidate_name = "NSSP: % ED Visits COVID",
         candidate_csv = NULL,
-        reference_sources = c("nhsn", "claims_outpatient"),
-        reference_indicators = c(
+        reference_source = c("nhsn", "claims_outpatient"),
+        reference_signal = c(
             "confirmed_admissions_covid_ew",
             "claims_outpatient_ov_pct_claims_covid"
         ),
-        reference_names = c(
+        reference_name = c(
             "NHSN: Confirmed COVID Admissions",
             "Claims: % Outpatient Visits COVID"
         ),
-        reference_csvs = NULL,
+        reference_csv = NULL,
         geo_type = "state",
         start_day = format(Sys.Date() - 365 * 2),
         end_day = format(Sys.Date()),
@@ -399,18 +399,18 @@ if (is_blank_param(params$candidate_name)) {
 }
 candidate_name <- as.character(params$candidate_name)[1]
 
-if (!candidate_has_csv && (is_blank_param(params$candidate_source) || is_blank_param(params$candidate_indicator))) {
-    stop("candidate_source and candidate_indicator are required unless candidate_csv is provided.")
+if (!candidate_has_csv && (is_blank_param(params$candidate_source) || is_blank_param(params$candidate_signal))) {
+    stop("candidate_source and candidate_signal are required unless candidate_csv is provided.")
 }
 if (is_blank_param(params$candidate_source)) {
     candidate_source <- "csv"
 } else {
     candidate_source <- as.character(params$candidate_source)[1]
 }
-if (is_blank_param(params$candidate_indicator)) {
+if (is_blank_param(params$candidate_signal)) {
     candidate_indicator <- tools::file_path_sans_ext(basename(as.character(params$candidate_csv)[1]))
 } else {
-    candidate_indicator <- as.character(params$candidate_indicator)[1]
+    candidate_indicator <- as.character(params$candidate_signal)[1]
 }
 
 required_shared <- "geo_type"
@@ -419,10 +419,10 @@ if (length(missing_shared) > 0) {
     stop(glue("Missing required shared parameters: {paste(missing_shared, collapse = ', ')}"))
 }
 
-reference_sources <- as_param_chr(params$reference_sources)
-reference_indicators <- as_param_chr(params$reference_indicators)
-reference_names <- as_param_chr(params$reference_names)
-reference_csvs <- as_param_chr(params$reference_csvs)
+reference_sources <- as_param_chr(params$reference_source)
+reference_indicators <- as_param_chr(params$reference_signal)
+reference_names <- as_param_chr(params$reference_name)
+reference_csvs <- as_param_chr(params$reference_csv)
 
 n_refs <- max(
     length(reference_sources),
@@ -448,10 +448,10 @@ key_cols <- "geo_value"
 panel_cols <- c(key_cols, "time_value")
 reference_meta_cols <- c("reference_id", "reference_source", "reference_indicator", "reference_name", "reference_label")
 
-reference_sources <- align_reference_param(reference_sources, n_refs, param_name = "reference_sources")
-reference_indicators <- align_reference_param(reference_indicators, n_refs, param_name = "reference_indicators")
-reference_names <- align_reference_param(reference_names, n_refs, param_name = "reference_names")
-reference_csvs <- align_reference_param(reference_csvs, n_refs, param_name = "reference_csvs")
+reference_sources <- align_reference_param(reference_sources, n_refs, param_name = "reference_source")
+reference_indicators <- align_reference_param(reference_indicators, n_refs, param_name = "reference_signal")
+reference_names <- align_reference_param(reference_names, n_refs, param_name = "reference_name")
+reference_csvs <- align_reference_param(reference_csvs, n_refs, param_name = "reference_csv")
 
 reference_has_csv <- nzchar(trimws(reference_csvs)) & !is.na(reference_csvs)
 blank_reference_source <- is.na(reference_sources) | !nzchar(trimws(reference_sources))
@@ -459,11 +459,11 @@ blank_reference_indicator <- is.na(reference_indicators) | !nzchar(trimws(refere
 blank_reference_name <- is.na(reference_names) | !nzchar(trimws(reference_names))
 
 if (any(blank_reference_name)) {
-    stop("reference_names is required for every reference indicator.")
+    stop("reference_name is required for every reference indicator.")
 }
 api_reference_missing <- !reference_has_csv & (blank_reference_source | blank_reference_indicator)
 if (any(api_reference_missing)) {
-    stop("Each API reference requires reference_source and reference_indicator unless reference_csv is provided.")
+    stop("Each API reference requires reference_source and reference_signal unless reference_csv is provided.")
 }
 
 reference_sources[blank_reference_source & reference_has_csv] <- "csv"
@@ -545,7 +545,7 @@ if (nrow(mixed_series) > 0) {
     cli::cli_abort(c(
         "{.val {unique(mixed_series$indicator)}} {?has/have} more than one series per location (e.g. {.val {head(unique(mixed_series$geo_value), 3)}}): several rows per date, such as an age-group split, or several fill methods.",
         "i" = "This notebook compares one series per location (geo_value).",
-        "i" = "Filter the indicator to one series and pass it as a CSV through {.arg candidate_csv} or {.arg reference_csvs}."
+        "i" = "Filter the indicator to one series and pass it as a CSV through {.arg candidate_csv} or {.arg reference_csv}."
     ))
 }
 df_candidate <- select(df_candidate, -any_of("fill_method"))

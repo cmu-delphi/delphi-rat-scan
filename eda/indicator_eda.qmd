@@ -30,7 +30,7 @@ params:
   # Show the cross-sectional geographic outlier table (2.2.1)
   show_geo_outliers: true
   # Show the versioning summary. Off also skips the version-history query, which
-  # is the slowest part of the report; use revision_analysis.qmd for the detail.
+  # is the slowest part of the report; use revision/indicator_revision.qmd for the detail.
   show_versioning: true
   # Maximum locations to show in plots/tables
   max_locations_plot: 60
@@ -1430,7 +1430,7 @@ ggplot(noise_stats_plot, aes(x = cand_cv)) +
 Version dynamics is not the focus here. This section answers only whether the `r ind` `r sg_pl("revises", "revise")` at all and roughly how much. Relative revisions are scaled to the `r ind_poss` own magnitude: 0.1 means the observation shifted by 10% of its own size, and values near 1 mean revisions as large as the `r ind` `r sg_pl("itself", "themselves")`.
 
 ::: {.callout-tip}
-For revision lags by location, convergence over time, and how much of the latest value is knowable at each lag, use `revision_analysis/revision_analysis.qmd`.
+For revision lags by location, convergence over time, and how much of the latest value is knowable at each lag, use `revision/indicator_revision.qmd`.
 :::
 
 ```{r}

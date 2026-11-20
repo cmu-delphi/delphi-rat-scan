@@ -1,5 +1,5 @@
 ---
-title: "Indicator Comparison: `r c(params$candidate_name, params$candidate_indicator, 'Candidate')[1]` vs `r c(params$guiding_name, params$guiding_indicator, 'Guiding')[1]`"
+title: "Indicator Comparison: `r c(params$candidate_name, params$candidate_signal, 'Candidate')[1]` vs `r c(params$reference_name, params$reference_signal, 'Guiding')[1]`"
 author: "Delphi Group"
 date: today
 format:
@@ -10,16 +10,16 @@ format:
     number-sections: true
     embed-resources: true
 params:
-  # Guiding Indicator
-  guiding_source:
-  guiding_indicator:
-  guiding_name:
-  guiding_csv: !expr "NULL"
   # Candidate Indicator
   candidate_source:
-  candidate_indicator:
+  candidate_signal:
   candidate_name:
   candidate_csv: !expr "NULL"
+  # Reference Indicator (presumed ground truth)
+  reference_source:
+  reference_signal:
+  reference_name:
+  reference_csv: !expr "NULL"
   # Shared settings
   geo_type:
   start_day:
@@ -50,15 +50,16 @@ execute:
 # When running interactively, populate params from defaults
 if (!exists("params")) {
     params <- list(
-        guiding_source = "nhsn",
-        guiding_indicator = "confirmed_admissions_covid_ew",
-        guiding_name = "COVID Hospital Admissions (NHSN)",
-        guiding_csv = NULL,
-        # Candidate Indicator,
+        # Candidate Indicator
         candidate_source = "nssp",
-        candidate_indicator = "pct_ed_visits_covid",
+        candidate_signal = "pct_ed_visits_covid",
         candidate_name = "NSSP: % ED Visits COVID",
         candidate_csv = NULL,
+        # Reference Indicator
+        reference_source = "nhsn",
+        reference_signal = "confirmed_admissions_covid_ew",
+        reference_name = "COVID Hospital Admissions (NHSN)",
+        reference_csv = NULL,
         # Shared settings,
         geo_type = "state",
         end_day = format(Sys.Date()),
@@ -87,14 +88,14 @@ flatten_param <- function(x) {
         as.character(x)
     }
 }
-params$guiding_source    <- flatten_param(params$guiding_source)
-params$guiding_indicator <- flatten_param(params$guiding_indicator)
-params$guiding_name      <- flatten_param(params$guiding_name)
+params$reference_source    <- flatten_param(params$reference_source)
+params$reference_signal <- flatten_param(params$reference_signal)
+params$reference_name      <- flatten_param(params$reference_name)
 params$candidate_source  <- flatten_param(params$candidate_source)
-params$candidate_indicator <- flatten_param(params$candidate_indicator)
+params$candidate_signal <- flatten_param(params$candidate_signal)
 params$candidate_name    <- flatten_param(params$candidate_name)
 params$geo_type          <- flatten_param(params$geo_type)
-params$guiding_csv       <- flatten_param(params$guiding_csv)
+params$reference_csv       <- flatten_param(params$reference_csv)
 params$candidate_csv     <- flatten_param(params$candidate_csv)
 
 # Helper to resolve relative file paths across render working directories
@@ -115,12 +116,12 @@ resolve_path <- function(path) {
     }
     return(path)
 }
-params$guiding_csv   <- resolve_path(params$guiding_csv)
+params$reference_csv   <- resolve_path(params$reference_csv)
 params$candidate_csv <- resolve_path(params$candidate_csv)
 
-if (!is.null(params$guiding_csv) && nzchar(params$guiding_csv)) {
-    if (!file.exists(params$guiding_csv)) {
-        stop(sprintf("Local guiding CSV file not found at path: %s", params$guiding_csv))
+if (!is.null(params$reference_csv) && nzchar(params$reference_csv)) {
+    if (!file.exists(params$reference_csv)) {
+        stop(sprintf("Local guiding CSV file not found at path: %s", params$reference_csv))
     }
 }
 if (!is.null(params$candidate_csv) && nzchar(params$candidate_csv)) {
@@ -130,17 +131,17 @@ if (!is.null(params$candidate_csv) && nzchar(params$candidate_csv)) {
 }
 
 # When using CSV route, source/indicator labels default to the CSV filename
-if (!is.null(params$guiding_csv) &&
-    (is.null(params$guiding_source) || !nzchar(params$guiding_source)))    params$guiding_source <- tools::file_path_sans_ext(basename(params$guiding_csv))
-if (!is.null(params$guiding_csv) &&
-    (is.null(params$guiding_indicator) || !nzchar(params$guiding_indicator))) params$guiding_indicator <- params$guiding_source
+if (!is.null(params$reference_csv) &&
+    (is.null(params$reference_source) || !nzchar(params$reference_source)))    params$reference_source <- tools::file_path_sans_ext(basename(params$reference_csv))
+if (!is.null(params$reference_csv) &&
+    (is.null(params$reference_signal) || !nzchar(params$reference_signal))) params$reference_signal <- params$reference_source
 if (!is.null(params$candidate_csv) &&
     (is.null(params$candidate_source) || !nzchar(params$candidate_source)))    params$candidate_source <- tools::file_path_sans_ext(basename(params$candidate_csv))
 if (!is.null(params$candidate_csv) &&
-    (is.null(params$candidate_indicator) || !nzchar(params$candidate_indicator))) params$candidate_indicator <- params$candidate_source
+    (is.null(params$candidate_signal) || !nzchar(params$candidate_signal))) params$candidate_signal <- params$candidate_source
 # Name defaults
-if (is.null(params$guiding_name) || !nzchar(params$guiding_name)) params$guiding_name <- params$guiding_indicator
-if (is.null(params$candidate_name) || !nzchar(params$candidate_name)) params$candidate_name <- params$candidate_indicator
+if (is.null(params$reference_name) || !nzchar(params$reference_name)) params$reference_name <- params$reference_signal
+if (is.null(params$candidate_name) || !nzchar(params$candidate_name)) params$candidate_name <- params$candidate_signal
 
 # Load libraries
 if (!require("pak")) install.packages("pak")
@@ -166,9 +167,9 @@ reference_window <- if (is.null(params$start_day) && is.null(params$end_day)) NU
 
 # Resolve geo_type parameter (infer if not provided)
 if (is.null(params$geo_type) || !nzchar(params$geo_type)) {
-    if (!is.null(params$guiding_csv) && file.exists(params$guiding_csv)) {
+    if (!is.null(params$reference_csv) && file.exists(params$reference_csv)) {
         tryCatch({
-            sample_df <- readr::read_csv(params$guiding_csv, n_max = 5, show_col_types = FALSE) %>%
+            sample_df <- readr::read_csv(params$reference_csv, n_max = 5, show_col_types = FALSE) %>%
                 epiprocess::as_epi_df()
             params$geo_type <- attributes(sample_df)$metadata$geo_type
         }, error = function(e) {
@@ -280,7 +281,7 @@ fetch_snapshot <- function(source, signal) {
         cli::cli_abort(c(
             "{source}/{signal} has more than one series per location (e.g. {.val {head(mixed_geos, 3)}}): several rows per date or several fill methods.",
             "i" = "This notebook compares one series per location (geo_value).",
-            "i" = "Filter it to one series and pass it as a CSV through {.arg guiding_csv} or {.arg candidate_csv}."
+            "i" = "Filter it to one series and pass it as a CSV through {.arg reference_csv} or {.arg candidate_csv}."
         ))
     }
     df %>%
@@ -348,9 +349,9 @@ nowcasting or forecasting.
 #| echo: false
 config_tbl <- tibble(
     Role = c("Guiding", "Candidate"),
-    Source = c(params$guiding_source, params$candidate_source),
-    Indicator = c(params$guiding_indicator, params$candidate_indicator),
-    Label = c(params$guiding_name, params$candidate_name)
+    Source = c(params$reference_source, params$candidate_source),
+    Indicator = c(params$reference_signal, params$candidate_signal),
+    Label = c(params$reference_name, params$candidate_name)
 )
 
 caption_str <- if (is.null(params$geo_type) || !nzchar(params$geo_type)) {
@@ -375,13 +376,13 @@ DT::datatable(config_tbl, caption = caption_str, rownames = FALSE, options = lis
 #| label: load-guiding
 #| output: asis
 # Load guiding indicator
-if (!is.null(params$guiding_csv)) {
-    df_guiding <- read.csv(params$guiding_csv, colClasses = c(geo_value = "character")) %>%
+if (!is.null(params$reference_csv)) {
+    df_guiding <- read.csv(params$reference_csv, colClasses = c(geo_value = "character")) %>%
         mutate(time_value = as.Date(time_value)) %>%
         filter(time_value >= start_date, time_value <= end_date) %>%
         as_epi_df()
 } else {
-    df_guiding <- fetch_snapshot(params$guiding_source, params$guiding_indicator)
+    df_guiding <- fetch_snapshot(params$reference_source, params$reference_signal)
 }
 
 cat(sprintf(
@@ -420,7 +421,7 @@ if (!is.null(params$candidate_csv)) {
         df_candidate <- df_candidate_raw %>% as_epi_df()
     }
 } else {
-    df_candidate <- fetch_snapshot(params$candidate_source, params$candidate_indicator)
+    df_candidate <- fetch_snapshot(params$candidate_source, params$candidate_signal)
 }
 
 cat(sprintf(
@@ -473,7 +474,7 @@ if (is.null(candidate_archive) && is.null(params$candidate_csv)) {
     # Request only the sampled locations and the relevant time range.
     df_archive_raw <- epidata_archive(
         source = params$candidate_source,
-        signals = params$candidate_indicator,
+        signals = params$candidate_signal,
         geo_type = params$geo_type,
         geo_values = archive_geos,
         reference_time = epirange(archive_start, params$end_day)
@@ -621,7 +622,7 @@ df_long <- df_inter %>%
     ungroup() %>%
     mutate(indicator = recode(indicator,
         candidate = params$candidate_name,
-        guiding = params$guiding_name
+        guiding = params$reference_name
     ))
 ```
 
@@ -700,7 +701,7 @@ df_quantiles_wide <- df_quantiles_wide %>%
     mutate(
         indicator = recode(geo_value,
             candidate = params$candidate_name,
-            guiding = params$guiding_name
+            guiding = params$reference_name
         )
     )
 
@@ -816,8 +817,8 @@ ggplot(coverage, aes(x = time_value)) +
     ) +
     geom_area(
         aes(
-            y = guiding_available, color = params$guiding_name,
-            fill = params$guiding_name
+            y = guiding_available, color = params$reference_name,
+            fill = params$reference_name
         ),
         linewidth = 0.7, alpha = 0.05
     ) +
@@ -831,7 +832,7 @@ ggplot(coverage, aes(x = time_value)) +
         name = "Indicator",
         values = dis_pal_list,
         breaks = c(
-            params$guiding_name,
+            params$reference_name,
             params$candidate_name, "Both"
         )
     ) +
@@ -839,7 +840,7 @@ ggplot(coverage, aes(x = time_value)) +
         name = "Indicator",
         values = dis_pal_list,
         breaks = c(
-            params$guiding_name,
+            params$reference_name,
             params$candidate_name, "Both"
         )
     ) +
@@ -1042,7 +1043,7 @@ noise_long <- noise_stats_plot %>%
     mutate(
         indicator = recode(indicator,
             cand_cv = params$candidate_name,
-            guid_cv = params$guiding_name
+            guid_cv = params$reference_name
         )
     )
 
@@ -1072,7 +1073,7 @@ p_scatter <- ggplot(noise_stats_plot, aes(x = guid_cv, y = cand_cv)) +
     labs(
         title = "Paired CV Comparison",
         subtitle = "Points below the dashed line represent locations where the candidate is more stable.",
-        x = sprintf("CV: %s (Guiding)", params$guiding_name),
+        x = sprintf("CV: %s (Guiding)", params$reference_name),
         y = sprintf("CV: %s (Candidate)", params$candidate_name)
     )
 
@@ -1197,7 +1198,7 @@ df_guid_q <- df_quantiles_norm %>% filter(geo_value == "guiding")
 p_quant <- ggplot(mapping = aes(x = time_value)) +
     geom_ribbon(data = df_guid_q, aes(ymin = `0.05`, ymax = `0.95`), fill = pal_guid, alpha = 0.10) +
     geom_ribbon(data = df_guid_q, aes(ymin = `0.25`, ymax = `0.75`), fill = pal_guid, alpha = 0.25) +
-    geom_line(data = df_guid_q, aes(y = `0.5`, color = params$guiding_name), linewidth = 1) +
+    geom_line(data = df_guid_q, aes(y = `0.5`, color = params$reference_name), linewidth = 1) +
     geom_ribbon(data = df_cand_q, aes(ymin = `0.05`, ymax = `0.95`), fill = pal_cand, alpha = 0.10) +
     geom_ribbon(data = df_cand_q, aes(ymin = `0.25`, ymax = `0.75`), fill = pal_cand, alpha = 0.25) +
     geom_line(data = df_cand_q, aes(y = `0.5`, color = params$candidate_name), linewidth = 1) +
@@ -1205,7 +1206,7 @@ p_quant <- ggplot(mapping = aes(x = time_value)) +
         limits = range(cor_by_time$time_value, na.rm = TRUE),
         breaks = breaks_pretty(n = 6), label = label_date_short()
     ) +
-    scale_color_manual(values = setNames(c(pal_guid, pal_cand), c(params$guiding_name, params$candidate_name))) +
+    scale_color_manual(values = setNames(c(pal_guid, pal_cand), c(params$reference_name, params$candidate_name))) +
     labs(
         subtitle = "Smoothed Quantile Trends (standardised per indicator for shape comparison)",
         x = NULL, y = "Standardised value",
