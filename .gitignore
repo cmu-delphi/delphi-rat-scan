@@ -41,3 +41,6 @@
 
 # revision
 revision/data/
+
+# Archived notebooks kept locally, not versioned
+/.nowcast-eval/
