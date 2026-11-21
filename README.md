@@ -4,12 +4,12 @@ RAT-SCAN (Rapid Assessment Tool for Signal Correlation and iNformation) is a set
 
 ## Notebooks
 
-| Folder | Notebook | Purpose |
-| --- | --- | --- |
-| [`eda/`](eda/) | [`indicator_eda.qmd`](eda/indicator_eda.qmd) | Characteristics, coverage, missingness and revisions of one or more indicators |
-| [`correlation/`](correlation/) | [`indicator_correlation_single.qmd`](correlation/indicator_correlation_single.qmd) | Candidate vs one reference indicator: overlays, correlation and lags |
-| | [`indicator_correlation_multi.qmd`](correlation/indicator_correlation_multi.qmd) | Candidate vs several reference indicators |
-| [`revision/`](revision/) | [`indicator_revision.qmd`](revision/indicator_revision.qmd) | Revisions of one signal: bias of first reports, how fast values stabilize, and variation by location, season and signal features |
+| Folder                         | Notebook                                                                           | Purpose                                                                                                                          |
+| ------------------------------ | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| [`eda/`](eda/)                 | [`indicator_eda.qmd`](eda/indicator_eda.qmd)                                       | Characteristics, coverage, missingness and revisions of one or more indicators                                                   |
+| [`correlation/`](correlation/) | [`indicator_correlation_single.qmd`](correlation/indicator_correlation_single.qmd) | Candidate vs one reference indicator: overlays, correlation and lags                                                             |
+|                                | [`indicator_correlation_multi.qmd`](correlation/indicator_correlation_multi.qmd)   | Candidate vs several reference indicators                                                                                        |
+| [`revision/`](revision/)       | [`indicator_revision.qmd`](revision/indicator_revision.qmd)                        | Revisions of one signal: bias of first reports, how fast values stabilize, and variation by location, season and signal features |
 
 ## Installation
 
