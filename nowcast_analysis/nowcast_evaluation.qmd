@@ -1,0 +1,567 @@
+---
+title: "Nowcast Evaluation: `r params$nowcast_name %||% params$nowcast_source`"
+subtitle: "Artifact `r params$artifact_id`"
+author: "Delphi Group"
+date: today
+format:
+  html:
+    code-fold: true
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    embed-resources: true
+params:
+  # Nowcast to evaluate: an Epidata V5 /nowcast/ source and one of its served
+  # artifacts. The artifact fixes the model, its params and the signal.
+  # fetch_served_artifacts() in R/nowcast_api.R lists the served artifacts.
+  nowcast_source:
+  artifact_id:
+  nowcast_name:
+  geo_type: state
+  # Finalized guiding indicator for the correlation lift. Leave empty for WIS only.
+  guiding_source:
+  guiding_signal:
+  guiding_name:
+  # Forecast dates (Wednesdays) to evaluate. Default: first nowcast run to today.
+  start_day:
+  end_day:
+  # Days from the forecast Wednesday to the data cutoff. Default: -1 (Tuesday)
+  # for claims, which release after forecasts are made, 0 otherwise.
+  report_offset_days: !expr "NULL"
+  # Lags to score, in the nowcast's time unit. Default: daily nowcasts use
+  # 0-7 days then weekly to ref_lag; weekly nowcasts use every lag.
+  wis_lags: !expr "NULL"
+  # Weeks between the candidate week and the anchor week of the guide.
+  correlation_lags_weeks: !expr "0:4"
+  # Reference times this close to the latest version may still be revised,
+  # so they are not used as truth.
+  truth_buffer_days: 182
+  # Minimum forecast dates for a per-geo correlation.
+  min_points_per_geo: 20
+  # Geos for the example plots.
+  example_geos: !expr 'c("ca", "ny", "pa", "tx")'
+  # Keep API results on disk between renders.
+  use_cache: true
+knitr:
+  opts_chunk:
+    comment: "#>"
+    message: FALSE
+    warning: FALSE
+    out.width: "100%"
+    dev: "png"
+    fig.width: 9
+    fig.height: 5
+    fig.align: center
+editor_options:
+  chunk_output_type: console
+execute:
+  cache: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+if (!exists("params")) {
+    params <- list(
+        nowcast_source = "claims_outpatient",
+        artifact_id = "bde3aa63cb72cca5",
+        nowcast_name = "Claims: % Outpatient Visits COVID",
+        geo_type = "state",
+        guiding_source = "nhsn",
+        guiding_signal = "confirmed_admissions_covid_ew",
+        guiding_name = "NHSN: Confirmed COVID Admissions",
+        start_day = "2024-11-01",
+        end_day = NULL,
+        report_offset_days = NULL,
+        wis_lags = NULL,
+        correlation_lags_weeks = 0:4,
+        truth_buffer_days = 182,
+        min_points_per_geo = 20,
+        example_geos = c("ca", "ny", "pa", "tx"),
+        use_cache = TRUE
+    )
+}
+
+if (!require("pak")) install.packages("pak")
+min_versions <- c(epidatr = "1.4.0", epiprocess = "0.13.0")
+for (pkg in names(min_versions)) {
+    if (!requireNamespace(pkg, quietly = TRUE) || packageVersion(pkg) < min_versions[[pkg]]) {
+        pak::pkg_install(paste0("cmu-delphi/", pkg, "@dev"))
+    }
+}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(epidatr, epiprocess, httr2, DT, tidyverse, scales, ggtext, glue, here)
+
+for (path in list.files(here::here("nowcast_analysis", "R"), pattern = "\\.R$", full.names = TRUE)) {
+    source(path)
+}
+set_rat_scan_theme()
+
+guiding_name <- params$guiding_name %||% params$guiding_signal
+has_guide <- !is.null(params$guiding_source) && nzchar(params$guiding_source)
+
+cache_dir <- here::here("nowcast_analysis", "nowcast_evaluation_cache")
+dir.create(cache_dir, showWarnings = FALSE)
+cached <- function(name, expr) {
+    path <- file.path(cache_dir, paste0(name, "_", rlang::hash(params), ".rds"))
+    if (params$use_cache && file.exists(path)) {
+        return(readRDS(path))
+    }
+    value <- expr
+    saveRDS(value, path)
+    value
+}
+```
+
+This notebook evaluates a **nowcast** as it would have been used on forecast day.
+Forecasts are made on Wednesdays, so each Wednesday has a data cutoff: the latest release available before forecasts are made.
+At each cutoff, the nowcast is compared with the **as-of value**, the latest reported value a forecaster would have used without it.
+
+Two questions are asked:
+
+1. Is the nowcast closer to the finalized value than the as-of value? This uses the weighted interval score (WIS), as in the epidata-etl nowcast evaluation.
+2. Does the nowcast track a finalized guiding indicator better than the as-of value does? This is the RAT-scan correlation analysis, run once on the nowcast and once on the as-of data.
+
+## Configuration {#config}
+
+```{r}
+#| label: metadata
+if (!grepl("^[0-9a-f]{16}$", params$artifact_id %||% "")) {
+    served <- fetch_served_artifacts(params$nowcast_source)
+    cli::cli_abort(c(
+        "{.arg artifact_id} must be one 16-character artifact ID, not {.val {params$artifact_id %||% 'empty'}}.",
+        "i" = "Served artifacts of {params$nowcast_source}: {.val {paste(served$signal, served$artifact_id)}}."
+    ))
+}
+artifact <- fetch_nowcast_metadata(params$nowcast_source, artifact_id = params$artifact_id)
+if (nrow(artifact) != 1) {
+    cli::cli_abort("Artifact {.val {params$artifact_id}} is not a nowcast artifact of {params$nowcast_source}.")
+}
+nowcast_signal <- artifact$signal
+nowcast_name <- params$nowcast_name %||% nowcast_signal
+model_params <- artifact$params[[1]]
+weekly <- identical(model_params$temporal_resol, "weekly")
+lag_unit <- if (weekly) "weeks" else "days"
+ref_lag <- model_params$ref_lag
+exclusions <- exclusions_from_params(model_params)
+
+report_offset_days <- params$report_offset_days %||% default_report_offset(params$nowcast_source)
+start_day <- as.Date(params$start_day %||% artifact$first_train_data)
+end_day <- as.Date(params$end_day %||% Sys.Date())
+cutoffs <- forecast_cutoffs(start_day, end_day, report_offset_days)
+
+anchor_lags <- if (has_guide) params$correlation_lags_weeks else integer()
+wis_lags <- params$wis_lags %||% if (weekly) NULL else default_daily_lags(ref_lag)
+fetch_horizons <- if (weekly) NULL else -sort(unique(c(
+    wis_lags, anchor_lags_days(wday0(cutoffs$cutoff[1]), anchor_lags)
+)))
+
+config_tbl <- tibble(
+    Item = c(
+        "Nowcast", "Artifact", "Time unit", "Reference lag (ref_lag)", "Guiding indicator",
+        "Forecast dates", "Data cutoff", "Truth buffer"
+    ),
+    Value = c(
+        glue("{nowcast_name} ({params$nowcast_source} / {nowcast_signal}, {params$geo_type})"),
+        glue("{artifact$nowcaster} {artifact$artifact_id}: {artifact$run_count} runs, data to {artifact$latest_train_data}"),
+        lag_unit,
+        glue("{ref_lag} days"),
+        if (has_guide) glue("{guiding_name} ({params$guiding_source} / {params$guiding_signal}), finalized") else "none",
+        glue("{nrow(cutoffs)} Wednesdays, {min(cutoffs$forecast_date)} to {max(cutoffs$forecast_date)}"),
+        if (report_offset_days == 0) "the forecast Wednesday" else glue("{weekdays(cutoffs$cutoff[1])}, {abs(report_offset_days)} day(s) before each forecast Wednesday"),
+        glue("{params$truth_buffer_days} days")
+    )
+)
+DT::datatable(config_tbl, rownames = FALSE, options = list(dom = "t", ordering = FALSE))
+```
+
+### Model parameters
+
+The parameters of artifact `r params$artifact_id`, as stored in the nowcast registry.
+
+```{r}
+#| label: model-params
+DT::datatable(params_table(model_params), rownames = FALSE,
+              options = list(dom = "t", pageLength = 100, ordering = FALSE))
+```
+
+```{r}
+#| label: exclusions
+#| output: asis
+if (nrow(exclusions) > 0) {
+    cat("Rows with a report or reference time in these training exclusion windows of the artifact are not scored:\n\n")
+    exclusions |>
+        mutate(geos = map_chr(geo_values, \(geos) if (length(geos) == 0) "all" else paste(geos, collapse = ", "))) |>
+        glue_data("- {start} to {end} ({geos}): {reason}") |>
+        cat(sep = "\n")
+}
+```
+
+## Data {#data}
+
+```{r}
+#| label: load-nowcasts
+#| output: asis
+nowcasts <- cached("nowcasts", fetch_nowcast_archive(
+    params$nowcast_source, nowcast_signal, params$geo_type, artifact$artifact_id,
+    report_dates = cutoffs$cutoff, horizons = fetch_horizons, weekly = weekly
+)) |>
+    inner_join(cutoffs, by = c("report_time" = "cutoff")) |>
+    mutate(cutoff = report_time)
+
+cutoffs_with_run <- n_distinct(nowcasts$cutoff)
+cat(glue(
+    "- **Nowcast runs**: {cutoffs_with_run} of {nrow(cutoffs)} cutoffs have a run on the cutoff date ",
+    "({label_comma()(nrow(nowcasts))} quantile rows, {n_distinct(nowcasts$geo_value)} geos)."
+), "\n")
+if (cutoffs_with_run < nrow(cutoffs)) {
+    missing_cutoffs <- setdiff(cutoffs$cutoff, nowcasts$cutoff) |> as.Date()
+    cat(glue(
+        "- Cutoffs without a run are not evaluated. The first few: {paste(head(sort(missing_cutoffs), 5), collapse = ', ')}."
+    ), "\n")
+}
+if (cutoffs_with_run == 0) {
+    cli::cli_abort("No nowcast run falls on a cutoff date. Check {.arg report_offset_days} against the run schedule.")
+}
+```
+
+```{r}
+#| label: load-as-of
+#| output: asis
+nowcast_keys <- nowcasts |> distinct(forecast_date, cutoff, geo_value, reference_time, lag)
+max_fill_days <- 60L
+v5_rows <- cached("candidate_archive", epidata_archive(
+    params$nowcast_source, nowcast_signal, params$geo_type,
+    reference_time = epirange(min(nowcast_keys$reference_time) - max_fill_days, max(nowcast_keys$reference_time))
+))
+candidate_archive <- archive_from_v5(v5_rows)
+rm(v5_rows)
+
+as_of <- cached("as_of", as_of_values(candidate_archive, nowcast_keys, max_fill_days))
+truth <- final_values(candidate_archive, params$truth_buffer_days)
+
+cat(glue(
+    "- **As-of data**: {label_comma()(nrow(candidate_archive$DT))} archive rows, versions to {candidate_archive$versions_end}."
+), "\n")
+cat(glue(
+    "- **Truth**: finalized values up to {max(truth$reference_time)}, ",
+    "{params$truth_buffer_days} days before the latest version."
+), "\n")
+```
+
+```{r}
+#| label: score
+model_scores <- nowcasts |>
+    inner_join(truth, by = c("geo_value", "reference_time")) |>
+    apply_exclusions(exclusions, params$geo_type) |>
+    score_quantiles(c("forecast_date", "cutoff", "geo_value", "reference_time", "lag"))
+
+scores <- model_scores |>
+    inner_join(as_of, by = c("forecast_date", "cutoff", "geo_value", "reference_time", "lag")) |>
+    filter(!is.na(as_of_value)) |>
+    mutate(score_point(as_of_value, true_value))
+
+if (!is.null(wis_lags)) {
+    scores <- filter(scores, lag %in% wis_lags)
+}
+scored_lags <- sort(unique(scores$lag))
+lag_label <- function(lags, levels = scored_lags) factor(paste("lag", lags), levels = paste("lag", levels))
+# Rows for every forecast date, so that lines break where dates have no data.
+complete_dates <- function(rows, ...) tidyr::complete(rows, forecast_date = cutoffs$forecast_date, ...)
+```
+
+## Nowcasts against the as-of and finalized values {#overview}
+
+Each panel shows, for one geo and lag, the nowcast at every cutoff: its median and its 80% interval.
+The as-of value is the latest reported value at the cutoff, filled forward when the reference time has no value yet.
+The finalized line is the latest value; it stops `r params$truth_buffer_days` days before the latest version.
+
+```{r}
+#| label: overview
+#| fig-height: 8
+overview_lags <- unique(c(min(scored_lags), scored_lags[which.min(abs(scored_lags - median(scored_lags)))]))
+overview_geos <- intersect(params$example_geos, unique(nowcasts$geo_value))
+
+overview_bands <- nowcasts |>
+    filter(geo_value %in% overview_geos, lag %in% overview_lags, quantile_level %in% c(0.1, 0.5, 0.9)) |>
+    pivot_wider(names_from = quantile_level, values_from = value, names_prefix = "q") |>
+    left_join(as_of, by = c("forecast_date", "cutoff", "geo_value", "reference_time", "lag")) |>
+    group_by(geo_value, lag) |>
+    tidyr::complete(reference_time = seq(min(reference_time), max(reference_time), by = "week")) |>
+    ungroup() |>
+    mutate(lag = lag_label(lag, overview_lags))
+overview_final <- truth |>
+    filter(geo_value %in% overview_geos, reference_time >= min(overview_bands$reference_time))
+
+ggplot(overview_bands, aes(x = reference_time)) +
+    geom_ribbon(aes(ymin = q0.1, ymax = q0.9), fill = version_colours[["nowcast"]], alpha = 0.2) +
+    geom_line(data = tidyr::crossing(overview_final, lag = unique(overview_bands$lag)),
+              aes(y = true_value, colour = "final"), linetype = "dashed", linewidth = 0.6) +
+    geom_line(aes(y = as_of_value, colour = "as_of"), linewidth = 0.6) +
+    geom_line(aes(y = q0.5, colour = "nowcast"), linewidth = 0.6) +
+    facet_grid(geo_value ~ lag, scales = "free_y") +
+    scale_colour_manual(values = version_colours, labels = version_labels, name = NULL) +
+    scale_x_date(breaks = breaks_pretty(n = 4), labels = label_date_short()) +
+    labs(x = "Reference date", y = nowcast_signal,
+         title = glue("{nowcast_name}: nowcast at each cutoff"))
+```
+
+## Weighted interval score {#wis}
+
+WIS is the mean over the stored quantile levels of 2 × the pinball loss, as in `compute_scores.sql` of epidata-etl.
+The as-of value is a point forecast, so its WIS is its absolute error.
+The relative WIS is the sum of nowcast WIS over the sum of as-of WIS on the same rows: below 1, the nowcast is better than using the data as reported.
+Log WIS is the same on `log(x + 1)`, which weights each geo by its relative error instead of its size.
+
+### By lag
+
+```{r}
+#| label: wis-by-lag
+rel_by_lag <- relative_scores(scores, "lag") |> arrange(lag)
+
+rel_by_lag |>
+    pivot_longer(c(rel_wis, rel_log_wis), names_to = "metric", values_to = "relative") |>
+    mutate(metric = recode(metric, rel_wis = "Relative WIS", rel_log_wis = "Relative log WIS")) |>
+    ggplot(aes(x = lag, y = relative, colour = metric)) +
+    geom_hline(yintercept = 1, linetype = "dashed", colour = "gray50") +
+    geom_line(linewidth = 0.8) +
+    geom_point(size = 2.5) +
+    scale_colour_manual(values = unname(version_colours[c("nowcast", "as_of")]), name = NULL) +
+    scale_y_continuous(limits = c(0, NA)) +
+    labs(x = glue("Lag from cutoff ({lag_unit})"), y = "Nowcast / as-of",
+         title = "Relative WIS by lag", subtitle = "Below 1: the nowcast is better than the as-of value")
+```
+
+```{r}
+#| label: wis-by-lag-table
+rel_by_lag |>
+    mutate(across(c(rel_wis, rel_log_wis), \(xx) round(xx, 3)), across(c(wis, null_wis), \(xx) signif(xx, 3))) |>
+    select(lag, n, rel_wis, rel_log_wis, nowcast_wis = wis, as_of_wis = null_wis) |>
+    DT::datatable(rownames = FALSE, caption = glue("Lags in {lag_unit}; WIS columns are means"),
+                  options = list(dom = "t", pageLength = 50, ordering = FALSE))
+```
+
+The as-of value at the shortest lags is often a filled-forward value, because the data for that reference time is not yet reported.
+This share explains much of the gain at short lags:
+
+```{r}
+#| label: as-of-availability
+#| fig-height: 3.5
+scores |>
+    summarize(filled = mean(!as_of_available), .by = lag) |>
+    ggplot(aes(x = lag, y = filled)) +
+    geom_col(fill = version_colours[["as_of"]], width = if (weekly) 0.6 else 0.8) +
+    scale_y_continuous(labels = label_percent(), limits = c(0, 1)) +
+    labs(x = glue("Lag from cutoff ({lag_unit})"), y = "Share filled forward",
+         title = "As-of values with no report yet for their reference time")
+```
+
+### By geo
+
+```{r}
+#| label: wis-by-geo
+#| fig-height: 9
+rel_by_geo <- relative_scores(scores, c("geo_value", "lag"))
+geo_order <- relative_scores(scores, "geo_value") |> arrange(rel_wis) |> pull(geo_value)
+
+rel_by_geo |>
+    mutate(geo_value = factor(geo_value, levels = geo_order), lag = lag_label(lag)) |>
+    ggplot(aes(x = lag, y = geo_value, fill = rel_wis)) +
+    geom_tile(colour = "white", linewidth = 0.5) +
+    scale_fill_relative("Relative WIS") +
+    labs(x = glue("Lag from cutoff ({lag_unit})"), y = NULL, title = "Relative WIS by geo and lag",
+         subtitle = "Blue: nowcast better than the as-of value. Grey: both are exact. Geos sorted by overall relative WIS.") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.grid = element_blank())
+```
+
+### Over time
+
+```{r}
+#| label: wis-over-time
+#| fig-height: 6
+time_lags <- overview_lags
+relative_scores(filter(scores, lag %in% time_lags), c("forecast_date", "lag")) |>
+    complete_dates(lag = time_lags) |>
+    mutate(lag = lag_label(lag, time_lags)) |>
+    ggplot(aes(x = forecast_date, y = rel_wis)) +
+    geom_hline(yintercept = 1, linetype = "dashed", colour = "gray50") +
+    geom_line(colour = version_colours[["nowcast"]], linewidth = 0.6) +
+    geom_point(colour = version_colours[["nowcast"]], size = 1.5) +
+    facet_wrap(~lag, ncol = 1) +
+    scale_y_continuous(trans = "log2", labels = label_number(accuracy = 0.01)) +
+    scale_x_date(breaks = breaks_pretty(), labels = label_date_short()) +
+    labs(x = "Forecast date", y = "Relative WIS (log scale)",
+         title = "Relative WIS at each forecast date", subtitle = "Pooled over geos; gaps are dates without a run or excluded")
+```
+
+### Interval coverage
+
+The share of finalized values inside each central interval of the nowcast. A calibrated nowcast is on the dashed nominal line.
+
+```{r}
+#| label: coverage
+#| fig-height: 4
+coverage <- scores |>
+    summarize(across(c(cover_60, cover_80, cover_90), \(xx) mean(xx, na.rm = TRUE)), .by = lag) |>
+    pivot_longer(-lag, names_to = "interval", values_to = "coverage") |>
+    mutate(nominal = as.numeric(str_remove(interval, "cover_")) / 100,
+           interval = paste0(nominal * 100, "% interval"))
+
+ggplot(coverage, aes(x = lag, y = coverage)) +
+    geom_hline(aes(yintercept = nominal), linetype = "dashed", colour = "gray50") +
+    geom_line(colour = version_colours[["nowcast"]], linewidth = 0.8) +
+    geom_point(colour = version_colours[["nowcast"]], size = 2.5) +
+    facet_wrap(~interval) +
+    scale_y_continuous(labels = label_percent(), limits = c(0, 1)) +
+    labs(x = glue("Lag from cutoff ({lag_unit})"), y = "Empirical coverage", title = "Interval coverage by lag")
+```
+
+```{r}
+#| label: guide-section-flag
+#| include: false
+lift_text <- if (has_guide) "" else "No guiding indicator was given, so the correlation lift is not computed."
+```
+
+## Correlation lift against `r if (has_guide) guiding_name else "a guiding indicator"` {#lift}
+
+`r lift_text`
+
+```{r}
+#| label: lift-data
+#| eval: !expr has_guide
+#| output: asis
+guide_rows <- cached("guide", epidata_snapshot(params$guiding_source, params$guiding_signal, params$geo_type))
+guide_final <- final_values_from_snapshot(guide_rows, params$truth_buffer_days) |>
+    mutate(reference_time = week_end_date(reference_time))
+
+candidates <- nowcasts |>
+    filter(quantile_level == 0.5) |>
+    select(forecast_date, cutoff, report_time, geo_value, reference_time, lag, nowcast = value) |>
+    left_join(as_of, by = c("forecast_date", "cutoff", "geo_value", "reference_time", "lag")) |>
+    apply_exclusions(exclusions, params$geo_type)
+pairs <- build_lift_pairs(candidates, guide_final, params$correlation_lags_weeks)
+
+cat(glue(
+    "- **Guide**: finalized {guiding_name}, weeks up to {max(guide_final$reference_time)}.\n",
+    "- **Pairs**: {label_comma()(nrow(pairs))} (forecast date, geo, lag) rows with a nowcast, an as-of value and the guide.\n"
+))
+```
+
+For each cutoff, the anchor is the Saturday that ends the latest full epiweek.
+The guide is its finalized value for the anchor week.
+At lag *k*, the candidate is the value for the week that ends *k* weeks before the anchor: once from the nowcast median and once from the as-of data at the same cutoff.
+`r if (!weekly) "The candidate is a daily 7-day average, so only its Saturday values are used: each covers exactly one epiweek."`
+The correlations are Spearman correlations, and Δ is nowcast minus as-of.
+At lags past the revision window, the nowcast and the as-of value agree, so Δ should go to 0.
+
+### Per geo, over time
+
+For each geo and lag, the correlation over forecast dates between the candidate and the guide (geos with at least `r params$min_points_per_geo` forecast dates).
+
+```{r}
+#| label: lift-by-geo
+#| eval: !expr has_guide
+#| fig-height: 4.5
+lift_geo <- lift_by_geo(pairs, params$min_points_per_geo)
+
+lift_geo |>
+    ggplot(aes(x = factor(lag_weeks), y = delta_cor)) +
+    geom_hline(yintercept = 0, linetype = "dashed", colour = "gray50") +
+    geom_boxplot(fill = version_colours[["nowcast"]], alpha = 0.3, outlier.shape = NA, width = 0.5) +
+    geom_jitter(width = 0.12, height = 0, size = 1.5, alpha = 0.5, colour = version_colours[["nowcast"]]) +
+    labs(x = "Lag (weeks before the anchor week)", y = "Δ Spearman (nowcast − as-of)",
+         title = "Correlation gain of the nowcast, per geo",
+         subtitle = glue("Against finalized {guiding_name}; one point per geo"))
+```
+
+```{r}
+#| label: lift-by-geo-table
+#| eval: !expr has_guide
+nowcast_lag_by_week <- pairs |> distinct(lag_weeks, lag) |>
+    summarize(nowcast_lag = paste(sort(lag), collapse = ", "), .by = lag_weeks)
+lift_geo |>
+    summarize(
+        geos = n(),
+        median_cor_nowcast = median(cor_nowcast),
+        median_cor_as_of = median(cor_as_of),
+        median_delta = median(delta_cor),
+        share_improved = mean(delta_cor > 0),
+        .by = lag_weeks
+    ) |>
+    left_join(nowcast_lag_by_week, by = "lag_weeks") |>
+    relocate(nowcast_lag, .after = lag_weeks) |>
+    arrange(lag_weeks) |>
+    mutate(across(starts_with("median"), \(xx) round(xx, 3)), share_improved = label_percent(1)(share_improved)) |>
+    DT::datatable(rownames = FALSE, caption = glue("nowcast_lag: the matching lag of the WIS section, in {lag_unit}"),
+                  options = list(dom = "t", ordering = FALSE))
+```
+
+```{r}
+#| label: lift-example
+#| eval: !expr has_guide
+#| fig-height: 7
+example_pairs <- pairs |>
+    filter(lag_weeks == min(params$correlation_lags_weeks), geo_value %in% overview_geos) |>
+    pivot_longer(c(nowcast, as_of_value, guide), names_to = "series", values_to = "value") |>
+    mutate(
+        series = recode(series, as_of_value = "as_of", guide = "final"),
+        value = value / max(value, na.rm = TRUE),
+        .by = c(geo_value, series)
+    ) |>
+    tidyr::complete(anchor = latest_saturday(cutoffs$cutoff), geo_value, series)
+
+ggplot(example_pairs, aes(x = anchor, y = value, colour = series, linetype = series)) +
+    geom_line(linewidth = 0.6) +
+    facet_wrap(~geo_value, ncol = 1, scales = "free_y") +
+    scale_colour_manual(values = version_colours, labels = c(version_labels[c("nowcast", "as_of")], final = guiding_name),
+                        name = NULL) +
+    scale_linetype_manual(values = c(nowcast = "solid", as_of = "solid", final = "dashed"),
+                          labels = c(version_labels[c("nowcast", "as_of")], final = guiding_name), name = NULL) +
+    scale_x_date(breaks = breaks_pretty(), labels = label_date_short()) +
+    labs(x = "Anchor week (ending)", y = "Scaled to each series' maximum",
+         title = glue("Lag {min(params$correlation_lags_weeks)}: candidate and guide by anchor week"))
+```
+
+### Across geos, at each forecast date
+
+The RAT-scan real-time view: at each forecast date, the correlation across geos (at least 5) between the candidate and the guide.
+This measures whether the geos rank the same way, which a nowcast changes less than it changes the trend within a geo.
+When one indicator is a count and the other a percentage, the ranks across geos mostly follow population, so read this view with care.
+
+```{r}
+#| label: lift-by-date
+#| eval: !expr has_guide
+#| fig-height: 5
+lift_date <- lift_by_date(pairs)
+
+lift_date |>
+    pivot_longer(c(cor_nowcast, cor_as_of), names_to = "series", values_to = "cor") |>
+    mutate(series = recode(series, cor_nowcast = "nowcast", cor_as_of = "as_of")) |>
+    complete_dates(lag_weeks = params$correlation_lags_weeks, series = c("nowcast", "as_of")) |>
+    mutate(lag_weeks = paste("Lag", lag_weeks, "weeks")) |>
+    ggplot(aes(x = forecast_date, y = cor, colour = series)) +
+    geom_hline(yintercept = 0, linetype = "dashed", colour = "gray50") +
+    geom_line(linewidth = 0.6) +
+    facet_wrap(~lag_weeks) +
+    scale_colour_manual(values = version_colours, labels = version_labels, name = NULL) +
+    scale_x_date(breaks = breaks_pretty(n = 4), labels = label_date_short()) +
+    labs(x = "Forecast date", y = "Spearman across geos", title = "Cross-geo correlation with the guide")
+```
+
+```{r}
+#| label: lift-by-date-table
+#| eval: !expr has_guide
+lift_date |>
+    summarize(dates = n(), median_delta = round(median(delta_cor), 3),
+              share_improved = label_percent(1)(mean(delta_cor > 0)), .by = lag_weeks) |>
+    arrange(lag_weeks) |>
+    DT::datatable(rownames = FALSE, options = list(dom = "t", ordering = FALSE))
+```
+
+## Method notes {#methods}
+
+- **Cutoffs.** A forecast date is a Wednesday. Its cutoff is `r report_offset_days` day(s) from it. Only runs whose report date is the cutoff are used, so the nowcast and the as-of value use the same release.
+- **Lags** are counted from the cutoff, in `r lag_unit`. Weekly nowcasts label a week by an inner day; this notebook moves the label to the Saturday that ends the epiweek, the V5 convention.
+- **As-of value.** The latest value at the cutoff. A reference time with no value yet gets the latest earlier value of its geo, up to `r max_fill_days` days back.
+- **Truth.** The latest value of the nowcast signal. Reference times within `r params$truth_buffer_days` days of the latest version are not scored, because they may still be revised. This is stricter than the model's `ref_lag` (`r ref_lag` days), which deliberately ignores the rare late revisions.
+- **Exclusions.** Rows in a training exclusion window of the artifact are dropped from the scores and from the correlation pairs.
